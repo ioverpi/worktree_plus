@@ -68,23 +68,17 @@ func main() {
 	dirsFlag := flag.String("dirs", "", "Comma-separated list of directories to create worktrees for. If not set, uses all directories with .git subfolder")
 	removeFlag := flag.Bool("remove", false, "Remove worktrees instead of creating them")
 	folderFlag := flag.String("folder", "", "Custom folder name for the worktree (defaults to branch name). Mapping is saved for later use.")
+	listFlag := flag.Bool("list", false, "List all saved folder-to-branch mappings")
 
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: worktree_plus [-dirs=dir1,dir2,...] [-folder=name] [-remove] <branch-name>")
+		fmt.Fprintln(os.Stderr, "       worktree_plus -list")
 		fmt.Fprintln(os.Stderr, "\nFlags must come before the branch name.")
 		fmt.Fprintln(os.Stderr, "")
 		flag.PrintDefaults()
 	}
 
 	flag.Parse()
-
-	// Get positional arguments (branch name is required)
-	args := flag.Args()
-	if len(args) < 1 {
-		flag.Usage()
-		os.Exit(1)
-	}
-	branchName := args[0]
 
 	// Get current working directory
 	cwd, err := os.Getwd()
@@ -99,6 +93,27 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Handle -list flag
+	if *listFlag {
+		if len(config.Mappings) == 0 {
+			fmt.Println("No mappings saved.")
+		} else {
+			fmt.Println("Folder -> Branch mappings:")
+			for folder, branch := range config.Mappings {
+				fmt.Printf("  %s -> %s\n", folder, branch)
+			}
+		}
+		return
+	}
+
+	// Get positional arguments (branch name is required for non-list operations)
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
+		os.Exit(1)
+	}
+	branchName := args[0]
 
 	// Determine folder name
 	var folderName string
