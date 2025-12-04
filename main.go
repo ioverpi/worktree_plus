@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -63,6 +66,50 @@ func findFolderByBranch(config *Config, branchName string) (string, bool) {
 	return "", false
 }
 
+// interactiveSelectMapping displays mappings and lets user choose one to remove
+func interactiveSelectMapping(config *Config) (folderName, branchName string, ok bool) {
+	if len(config.Mappings) == 0 {
+		fmt.Println("No mappings saved. Nothing to remove.")
+		return "", "", false
+	}
+
+	// Sort folders for consistent display
+	folders := make([]string, 0, len(config.Mappings))
+	for folder := range config.Mappings {
+		folders = append(folders, folder)
+	}
+	sort.Strings(folders)
+
+	fmt.Println("Select a worktree to remove:")
+	for i, folder := range folders {
+		fmt.Printf("  [%d] %s -> %s\n", i+1, folder, config.Mappings[folder])
+	}
+	fmt.Printf("  [0] Cancel\n")
+	fmt.Print("\nEnter choice: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+		return "", "", false
+	}
+
+	input = strings.TrimSpace(input)
+	choice, err := strconv.Atoi(input)
+	if err != nil || choice < 0 || choice > len(folders) {
+		fmt.Println("Invalid choice.")
+		return "", "", false
+	}
+
+	if choice == 0 {
+		fmt.Println("Cancelled.")
+		return "", "", false
+	}
+
+	selectedFolder := folders[choice-1]
+	return selectedFolder, config.Mappings[selectedFolder], true
+}
+
 func main() {
 	// Define flags
 	dirsFlag := flag.String("dirs", "", "Comma-separated list of directories to create worktrees for. If not set, uses all directories with .git subfolder")
@@ -72,6 +119,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: worktree_plus [-dirs=dir1,dir2,...] [-folder=name] [-remove] <branch-name>")
+		fmt.Fprintln(os.Stderr, "       worktree_plus -remove    (interactive selection)")
 		fmt.Fprintln(os.Stderr, "       worktree_plus -list")
 		fmt.Fprintln(os.Stderr, "\nFlags must come before the branch name.")
 		fmt.Fprintln(os.Stderr, "")
@@ -107,34 +155,48 @@ func main() {
 		return
 	}
 
-	// Get positional arguments (branch name is required for non-list operations)
+	// Get positional arguments
 	args := flag.Args()
-	if len(args) < 1 {
-		flag.Usage()
-		os.Exit(1)
-	}
-	branchName := args[0]
 
-	// Determine folder name
-	var folderName string
-	if *folderFlag != "" {
-		// Use specified folder name
-		folderName = *folderFlag
-	} else if existingFolder, ok := findFolderByBranch(config, branchName); ok {
-		// Look up existing mapping by branch name
-		folderName = existingFolder
-		fmt.Printf("Using existing mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+	var branchName, folderName string
+
+	// Handle interactive remove when no branch name provided
+	if *removeFlag && len(args) < 1 {
+		var ok bool
+		folderName, branchName, ok = interactiveSelectMapping(config)
+		if !ok {
+			os.Exit(0)
+		}
 	} else {
-		// Default to branch name as folder name
-		folderName = branchName
-	}
+		// Branch name is required for non-interactive operations
+		if len(args) < 1 {
+			flag.Usage()
+			os.Exit(1)
+		}
+		branchName = args[0]
 
-	// Save/update the mapping
-	config.Mappings[folderName] = branchName
-	if err := saveConfig(cwd, config); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
-	} else if *folderFlag != "" {
-		fmt.Printf("Saved mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+		// Determine folder name
+		if *folderFlag != "" {
+			// Use specified folder name
+			folderName = *folderFlag
+		} else if existingFolder, ok := findFolderByBranch(config, branchName); ok {
+			// Look up existing mapping by branch name
+			folderName = existingFolder
+			fmt.Printf("Using existing mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+		} else {
+			// Default to branch name as folder name
+			folderName = branchName
+		}
+
+		// Save/update the mapping (only when creating, not removing)
+		if !*removeFlag {
+			config.Mappings[folderName] = branchName
+			if err := saveConfig(cwd, config); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
+			} else if *folderFlag != "" {
+				fmt.Printf("Saved mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+			}
+		}
 	}
 
 	// Determine which directories to process
@@ -189,6 +251,14 @@ func main() {
 			} else {
 				fmt.Printf("\nRemoved empty folder directory %s\n", folderDir)
 			}
+		}
+
+		// Remove the mapping from config after successful removal
+		delete(config.Mappings, folderName)
+		if err := saveConfig(cwd, config); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to update config: %v\n", err)
+		} else {
+			fmt.Printf("Removed mapping for folder '%s'\n", folderName)
 		}
 	}
 
