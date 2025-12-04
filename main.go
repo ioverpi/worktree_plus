@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -9,13 +10,67 @@ import (
 	"strings"
 )
 
+// Config holds the folder name to branch name mappings
+type Config struct {
+	Mappings map[string]string `json:"mappings"`
+}
+
+const configFileName = ".worktree_plus.json"
+
+// loadConfig loads the config file from the given directory
+func loadConfig(dir string) (*Config, error) {
+	configPath := filepath.Join(dir, configFileName)
+	config := &Config{Mappings: make(map[string]string)}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return config, nil // Return empty config if file doesn't exist
+		}
+		return nil, err
+	}
+
+	if err := json.Unmarshal(data, config); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	if config.Mappings == nil {
+		config.Mappings = make(map[string]string)
+	}
+
+	return config, nil
+}
+
+// saveConfig saves the config file to the given directory
+func saveConfig(dir string, config *Config) error {
+	configPath := filepath.Join(dir, configFileName)
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0644)
+}
+
+// findFolderByBranch looks up a folder name by branch name in the config
+func findFolderByBranch(config *Config, branchName string) (string, bool) {
+	for folder, branch := range config.Mappings {
+		if branch == branchName {
+			return folder, true
+		}
+	}
+	return "", false
+}
+
 func main() {
 	// Define flags
 	dirsFlag := flag.String("dirs", "", "Comma-separated list of directories to create worktrees for. If not set, uses all directories with .git subfolder")
 	removeFlag := flag.Bool("remove", false, "Remove worktrees instead of creating them")
+	folderFlag := flag.String("folder", "", "Custom folder name for the worktree (defaults to branch name). Mapping is saved for later use.")
 
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: worktree_plus [-dirs=dir1,dir2,...] [-remove] <branch-name>")
+		fmt.Fprintln(os.Stderr, "Usage: worktree_plus [-dirs=dir1,dir2,...] [-folder=name] [-remove] <branch-name>")
 		fmt.Fprintln(os.Stderr, "\nFlags must come before the branch name.")
 		fmt.Fprintln(os.Stderr, "")
 		flag.PrintDefaults()
@@ -36,6 +91,35 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting current directory: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Load config
+	config, err := loadConfig(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Determine folder name
+	var folderName string
+	if *folderFlag != "" {
+		// Use specified folder name
+		folderName = *folderFlag
+	} else if existingFolder, ok := findFolderByBranch(config, branchName); ok {
+		// Look up existing mapping by branch name
+		folderName = existingFolder
+		fmt.Printf("Using existing mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+	} else {
+		// Default to branch name as folder name
+		folderName = branchName
+	}
+
+	// Save/update the mapping
+	config.Mappings[folderName] = branchName
+	if err := saveConfig(cwd, config); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
+	} else if *folderFlag != "" {
+		fmt.Printf("Saved mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
 	}
 
 	// Determine which directories to process
@@ -66,37 +150,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Processing %d directories for branch '%s'\n", len(targetDirs), branchName)
+	fmt.Printf("Processing %d directories for branch '%s' (folder: '%s')\n", len(targetDirs), branchName, folderName)
 
 	// Process each directory
 	for _, dir := range targetDirs {
 		if *removeFlag {
-			err = removeWorktree(dir, branchName)
+			err = removeWorktree(dir, folderName, branchName)
 		} else {
-			err = createWorktree(dir, branchName)
+			err = createWorktree(dir, folderName, branchName)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error processing %s: %v\n", dir, err)
 		}
 	}
 
-	// Clean up empty branch directory after all removals (e.g., ../cool-feature)
+	// Clean up empty folder directory after all removals (e.g., ../cool-feature)
 	if *removeFlag {
-		branchDir := filepath.Join(filepath.Dir(cwd), branchName)
-		entries, err := os.ReadDir(branchDir)
+		folderDir := filepath.Join(filepath.Dir(cwd), folderName)
+		entries, err := os.ReadDir(folderDir)
 		if err == nil && len(entries) == 0 {
-			if err := os.Remove(branchDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not remove empty branch directory %s: %v\n", branchDir, err)
+			if err := os.Remove(folderDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove empty folder directory %s: %v\n", folderDir, err)
 			} else {
-				fmt.Printf("\nRemoved empty branch directory %s\n", branchDir)
+				fmt.Printf("\nRemoved empty folder directory %s\n", folderDir)
 			}
 		}
 	}
 
-	// Symlink root directory files to branch directory after creating worktrees
+	// Symlink root directory files to folder directory after creating worktrees
 	if !*removeFlag {
-		branchDir := filepath.Join(filepath.Dir(cwd), branchName)
-		if err := symlinkRootFiles(cwd, branchDir, targetDirs); err != nil {
+		folderDir := filepath.Join(filepath.Dir(cwd), folderName)
+		if err := symlinkRootFiles(cwd, folderDir, targetDirs); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to symlink some root files: %v\n", err)
 		}
 	}
@@ -212,18 +296,18 @@ func remoteBranchExists(repoDir, branchName string) bool {
 	return len(output) > 0
 }
 
-// getWorktreePath calculates the worktree path: ../../<branch>/<dirname>
-func getWorktreePath(dir, branchName string) string {
+// getWorktreePath calculates the worktree path: ../../<folder>/<dirname>
+func getWorktreePath(dir, folderName string) string {
 	dirName := filepath.Base(dir)
 	parentDir := filepath.Dir(dir)
 	grandparentDir := filepath.Dir(parentDir)
-	return filepath.Join(grandparentDir, branchName, dirName)
+	return filepath.Join(grandparentDir, folderName, dirName)
 }
 
-// createWorktree creates a worktree for the given directory and branch
-func createWorktree(dir, branchName string) error {
+// createWorktree creates a worktree for the given directory, folder name, and branch
+func createWorktree(dir, folderName, branchName string) error {
 	dirName := filepath.Base(dir)
-	worktreePath := getWorktreePath(dir, branchName)
+	worktreePath := getWorktreePath(dir, folderName)
 
 	fmt.Printf("\n[%s] Creating worktree at %s\n", dirName, worktreePath)
 
@@ -273,10 +357,10 @@ func createWorktree(dir, branchName string) error {
 	return nil
 }
 
-// removeWorktree removes a worktree for the given directory and branch
-func removeWorktree(dir, branchName string) error {
+// removeWorktree removes a worktree for the given directory and folder name
+func removeWorktree(dir, folderName, branchName string) error {
 	dirName := filepath.Base(dir)
-	worktreePath := getWorktreePath(dir, branchName)
+	worktreePath := getWorktreePath(dir, folderName)
 
 	fmt.Printf("\n[%s] Removing worktree at %s\n", dirName, worktreePath)
 

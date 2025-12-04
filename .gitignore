@@ -26,3 +26,4 @@ Thumbs.db
 
 # Local settings
 settings.local.json
+.worktree_plus.json
