@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"sort"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -80,34 +80,107 @@ func runSelect(label string, items []string) int {
 	return finalModel.(selectModel).selected
 }
 
-// interactiveSelectMapping displays mappings and lets user choose one to remove
+// interactiveSelectMapping displays active mappings and lets user choose one to remove
 func interactiveSelectMapping(config *Config) (folderName, branchName string, ok bool) {
-	if len(config.Mappings) == 0 {
-		fmt.Println("No mappings saved. Nothing to remove.")
+	// Get only active folders
+	var activeFolders []FolderHistory
+	for _, f := range getRecentFolders(config) {
+		if f.IsActive {
+			activeFolders = append(activeFolders, f)
+		}
+	}
+
+	if len(activeFolders) == 0 {
+		fmt.Println("No active worktrees. Nothing to remove.")
 		return "", "", false
 	}
 
-	// Sort folders for consistent display
-	folders := make([]string, 0, len(config.Mappings))
-	for folder := range config.Mappings {
-		folders = append(folders, folder)
-	}
-	sort.Strings(folders)
-
 	// Build items with "folder -> branch" format
-	items := make([]string, len(folders)+1)
-	for i, folder := range folders {
-		items[i] = fmt.Sprintf("%s -> %s", folder, config.Mappings[folder])
+	items := make([]string, len(activeFolders)+1)
+	for i, f := range activeFolders {
+		items[i] = fmt.Sprintf("%s -> %s", f.Name, f.Branch)
 	}
-	items[len(folders)] = "Cancel"
+	items[len(activeFolders)] = "Cancel"
 
 	idx := runSelect("Select a worktree to remove:", items)
 
-	if idx == -1 || idx == len(folders) {
+	if idx == -1 || idx == len(activeFolders) {
 		fmt.Println("Cancelled.")
 		return "", "", false
 	}
 
-	selectedFolder := folders[idx]
-	return selectedFolder, config.Mappings[selectedFolder], true
+	selected := activeFolders[idx]
+	return selected.Name, selected.Branch, true
+}
+
+// formatTimeAgo formats a time as a human-readable "time ago" string
+func formatTimeAgo(t time.Time) string {
+	diff := time.Since(t)
+
+	switch {
+	case diff < time.Minute:
+		return "just now"
+	case diff < time.Hour:
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
+	case diff < 24*time.Hour:
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	case diff < 7*24*time.Hour:
+		days := int(diff.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	default:
+		return t.Format("Jan 2, 2006")
+	}
+}
+
+// selectFolderForBranch lets user choose a folder for the branch
+// Returns the folder name and whether user confirmed (vs cancelled)
+func selectFolderForBranch(config *Config, branchName string) (string, bool) {
+	recentFolders := getRecentFolders(config)
+
+	// Filter to only inactive folders (available for reuse)
+	var inactiveFolders []FolderHistory
+	for _, f := range recentFolders {
+		if !f.IsActive {
+			inactiveFolders = append(inactiveFolders, f)
+		}
+	}
+
+	// If no history, just use branch name
+	if len(inactiveFolders) == 0 {
+		return branchName, true
+	}
+
+	// Build menu items - default option first
+	items := make([]string, 0, len(inactiveFolders)+2)
+	items = append(items, fmt.Sprintf("Create new: %s", branchName))
+
+	for _, f := range inactiveFolders {
+		status := formatTimeAgo(f.LastUsed)
+		items = append(items, fmt.Sprintf("%s (was: %s, %s)", f.Name, f.Branch, status))
+	}
+	items = append(items, "Cancel")
+
+	idx := runSelect("Select folder for worktrees:", items)
+
+	if idx == -1 || idx == len(items)-1 {
+		return "", false // Cancelled
+	}
+
+	if idx == 0 {
+		return branchName, true // Create new with branch name
+	}
+
+	// Selected a previous folder
+	return inactiveFolders[idx-1].Name, true
 }

@@ -42,12 +42,17 @@ func main() {
 
 	// Handle -list flag
 	if *listFlag {
-		if len(config.Mappings) == 0 {
-			fmt.Println("No mappings saved.")
+		folders := getRecentFolders(config)
+		if len(folders) == 0 {
+			fmt.Println("No folder history.")
 		} else {
-			fmt.Println("Folder -> Branch mappings:")
-			for folder, branch := range config.Mappings {
-				fmt.Printf("  %s -> %s\n", folder, branch)
+			fmt.Println("Folder history (most recent first):")
+			for _, f := range folders {
+				status := "inactive"
+				if f.IsActive {
+					status = "active"
+				}
+				fmt.Printf("  %s -> %s (%s, %s)\n", f.Name, f.Branch, status, formatTimeAgo(f.LastUsed))
 			}
 		}
 		return
@@ -78,9 +83,17 @@ func main() {
 			// Use specified folder name
 			folderName = *folderFlag
 		} else if existingFolder, ok := findFolderByBranch(config, branchName); ok {
-			// Look up existing mapping by branch name
+			// Look up existing active mapping by branch name
 			folderName = existingFolder
 			fmt.Printf("Using existing mapping: folder '%s' -> branch '%s'\n", folderName, branchName)
+		} else if !*removeFlag {
+			// When creating without -folder, offer folder selection
+			var ok bool
+			folderName, ok = selectFolderForBranch(config, branchName)
+			if !ok {
+				fmt.Println("Cancelled.")
+				os.Exit(0)
+			}
 		} else {
 			// Default to branch name as folder name
 			folderName = branchName
@@ -88,7 +101,7 @@ func main() {
 
 		// Save/update the mapping (only when creating, not removing)
 		if !*removeFlag {
-			config.Mappings[folderName] = branchName
+			touchFolder(config, folderName, branchName)
 			if err := saveConfig(cwd, config); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
 			} else if *folderFlag != "" {
@@ -160,12 +173,12 @@ func main() {
 			fmt.Printf("Folder directory %s not removed (still contains files)\n", folderDir)
 		}
 
-		// Remove the mapping from config after successful removal
-		delete(config.Mappings, folderName)
+		// Deactivate the folder in config (keeps history)
+		deactivateFolder(config, folderName)
 		if err := saveConfig(cwd, config); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update config: %v\n", err)
 		} else {
-			fmt.Printf("Removed mapping for folder '%s'\n", folderName)
+			fmt.Printf("Deactivated folder '%s' (kept in history)\n", folderName)
 		}
 	}
 
