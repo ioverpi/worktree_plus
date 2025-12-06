@@ -1,13 +1,84 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"sort"
-	"strconv"
-	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+// selectModel is a bubbletea model for selection UI
+type selectModel struct {
+	label    string
+	items    []string
+	cursor   int
+	selected int
+	quit     bool
+}
+
+func (m selectModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "q", "esc":
+			m.selected = -1
+			m.quit = true
+			return m, tea.Quit
+		case "up", "k":
+			m.cursor--
+			if m.cursor < 0 {
+				m.cursor = len(m.items) - 1 // Wrap to bottom
+			}
+		case "down", "j":
+			m.cursor++
+			if m.cursor >= len(m.items) {
+				m.cursor = 0 // Wrap to top
+			}
+		case "enter", " ":
+			m.selected = m.cursor
+			m.quit = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m selectModel) View() string {
+	s := m.label + "\n\n"
+
+	for i, item := range m.items {
+		cursor := "  "
+		if m.cursor == i {
+			cursor = "> "
+		}
+		s += cursor + item + "\n"
+	}
+
+	s += "\n(j/k or arrows to move, enter to select, q to cancel)\n"
+	return s
+}
+
+// runSelect runs the selection UI and returns the selected index (-1 if cancelled)
+func runSelect(label string, items []string) int {
+	m := selectModel{
+		label:    label,
+		items:    items,
+		selected: -1,
+	}
+
+	p := tea.NewProgram(m)
+	finalModel, err := p.Run()
+	if err != nil {
+		fmt.Printf("Error running selection: %v\n", err)
+		return -1
+	}
+
+	return finalModel.(selectModel).selected
+}
 
 // interactiveSelectMapping displays mappings and lets user choose one to remove
 func interactiveSelectMapping(config *Config) (folderName, branchName string, ok bool) {
@@ -23,32 +94,20 @@ func interactiveSelectMapping(config *Config) (folderName, branchName string, ok
 	}
 	sort.Strings(folders)
 
-	fmt.Println("Select a worktree to remove:")
+	// Build items with "folder -> branch" format
+	items := make([]string, len(folders)+1)
 	for i, folder := range folders {
-		fmt.Printf("  [%d] %s -> %s\n", i+1, folder, config.Mappings[folder])
+		items[i] = fmt.Sprintf("%s -> %s", folder, config.Mappings[folder])
 	}
-	fmt.Printf("  [0] Cancel\n")
-	fmt.Print("\nEnter choice: ")
+	items[len(folders)] = "Cancel"
 
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
-		return "", "", false
-	}
+	idx := runSelect("Select a worktree to remove:", items)
 
-	input = strings.TrimSpace(input)
-	choice, err := strconv.Atoi(input)
-	if err != nil || choice < 0 || choice > len(folders) {
-		fmt.Println("Invalid choice.")
-		return "", "", false
-	}
-
-	if choice == 0 {
+	if idx == -1 || idx == len(folders) {
 		fmt.Println("Cancelled.")
 		return "", "", false
 	}
 
-	selectedFolder := folders[choice-1]
+	selectedFolder := folders[idx]
 	return selectedFolder, config.Mappings[selectedFolder], true
 }
