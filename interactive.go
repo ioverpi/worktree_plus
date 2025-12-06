@@ -143,6 +143,68 @@ func formatTimeAgo(t time.Time) string {
 	}
 }
 
+// textInputModel is a bubbletea model for text input
+type textInputModel struct {
+	label    string
+	value    string
+	done     bool
+	canceled bool
+}
+
+func (m textInputModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m textInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			m.canceled = true
+			m.done = true
+			return m, tea.Quit
+		case "enter":
+			m.done = true
+			return m, tea.Quit
+		case "backspace":
+			if len(m.value) > 0 {
+				m.value = m.value[:len(m.value)-1]
+			}
+		default:
+			// Only add printable characters
+			if len(msg.String()) == 1 {
+				m.value += msg.String()
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m textInputModel) View() string {
+	return fmt.Sprintf("%s\n\n> %s_\n\n(enter to confirm, esc to cancel)\n", m.label, m.value)
+}
+
+// promptTextInput prompts for text input and returns the value
+func promptTextInput(label, defaultValue string) (string, bool) {
+	m := textInputModel{
+		label: label,
+		value: defaultValue,
+	}
+
+	p := tea.NewProgram(m)
+	finalModel, err := p.Run()
+	if err != nil {
+		fmt.Printf("Error running input: %v\n", err)
+		return "", false
+	}
+
+	result := finalModel.(textInputModel)
+	if result.canceled || result.value == "" {
+		return "", false
+	}
+	return result.value, true
+}
+
 // selectFolderForBranch lets user choose a folder for the branch
 // Returns the folder name and whether user confirmed (vs cancelled)
 func selectFolderForBranch(config *Config, branchName string) (string, bool) {
@@ -162,8 +224,9 @@ func selectFolderForBranch(config *Config, branchName string) (string, bool) {
 	}
 
 	// Build menu items - default option first
-	items := make([]string, 0, len(inactiveFolders)+2)
+	items := make([]string, 0, len(inactiveFolders)+3)
 	items = append(items, fmt.Sprintf("Create new: %s", branchName))
+	items = append(items, "Enter custom folder name...")
 
 	for _, f := range inactiveFolders {
 		status := formatTimeAgo(f.LastUsed)
@@ -181,6 +244,11 @@ func selectFolderForBranch(config *Config, branchName string) (string, bool) {
 		return branchName, true // Create new with branch name
 	}
 
-	// Selected a previous folder
-	return inactiveFolders[idx-1].Name, true
+	if idx == 1 {
+		// Custom folder name input
+		return promptTextInput("Enter folder name:", "")
+	}
+
+	// Selected a previous folder (offset by 2 for the two options at the top)
+	return inactiveFolders[idx-2].Name, true
 }
