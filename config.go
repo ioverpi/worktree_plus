@@ -102,6 +102,25 @@ type FolderHistory struct {
 	IsActive bool
 }
 
+// checkBranchConflict checks if a branch is already active with a different folder
+// Returns the conflicting folder name if there's a conflict, empty string otherwise
+func checkBranchConflict(config *Config, folderName, branchName string) string {
+	for folder, info := range config.Folders {
+		if info.IsActive && info.Branch == branchName && folder != folderName {
+			return folder
+		}
+	}
+	return ""
+}
+
+// isExactMatch checks if folder+branch exactly matches an active session
+func isExactMatch(config *Config, folderName, branchName string) bool {
+	if info, exists := config.Folders[folderName]; exists {
+		return info.IsActive && info.Branch == branchName
+	}
+	return false
+}
+
 // getRecentFolders returns folders sorted by last used date (most recent first)
 func getRecentFolders(config *Config) []FolderHistory {
 	var folders []FolderHistory

@@ -99,8 +99,22 @@ func main() {
 			folderName = branchName
 		}
 
-		// Save/update the mapping (only when creating, not removing)
+		// When creating, check for conflicts
 		if !*removeFlag {
+			// Check if this exact folder+branch is already active
+			if isExactMatch(config, folderName, branchName) {
+				fmt.Printf("Worktrees for folder '%s' with branch '%s' already exist. Nothing to do.\n", folderName, branchName)
+				os.Exit(0)
+			}
+
+			// Check if branch is already in use with a different folder
+			if conflictFolder := checkBranchConflict(config, folderName, branchName); conflictFolder != "" {
+				fmt.Fprintf(os.Stderr, "Error: branch '%s' is already active in folder '%s'\n", branchName, conflictFolder)
+				fmt.Fprintf(os.Stderr, "Remove the existing worktrees first with: worktree_plus -remove %s\n", branchName)
+				os.Exit(1)
+			}
+
+			// Save/update the mapping
 			touchFolder(config, folderName, branchName)
 			if err := saveConfig(cwd, config); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to save config: %v\n", err)
