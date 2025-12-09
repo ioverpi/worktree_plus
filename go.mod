@@ -1,4 +1,4 @@
-module worktree_plus
+module github.com/ioverpi/worktree_plus
 
 go 1.24.0
 
