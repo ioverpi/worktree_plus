@@ -48,11 +48,11 @@ func main() {
 		} else {
 			fmt.Println("Folder history (most recent first):")
 			for _, f := range folders {
-				status := "inactive"
 				if f.IsActive {
-					status = "active"
+					fmt.Printf("  \033[32m%s -> %s (active, %s)\033[0m\n", f.Name, f.Branch, formatTimeAgo(f.LastUsed))
+				} else {
+					fmt.Printf("  %s -> %s (inactive, %s)\n", f.Name, f.Branch, formatTimeAgo(f.LastUsed))
 				}
-				fmt.Printf("  %s -> %s (%s, %s)\n", f.Name, f.Branch, status, formatTimeAgo(f.LastUsed))
 			}
 		}
 		return
