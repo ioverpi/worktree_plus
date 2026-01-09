@@ -20,6 +20,17 @@ func findGitDirs(root string) ([]string, error) {
 		}
 
 		dirPath := filepath.Join(root, entry.Name())
+
+		// Skip symlinks - they point to external git repos, not owned worktrees
+		// TODO: Check if this actually works
+		info, err := os.Lstat(dirPath)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+
 		gitPath := filepath.Join(dirPath, ".git")
 
 		// Check if .git exists (can be file or directory)
