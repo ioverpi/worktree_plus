@@ -46,12 +46,32 @@ func main() {
 		if len(folders) == 0 {
 			fmt.Println("No folder history.")
 		} else {
-			fmt.Println("Folder history (most recent first):")
+			// Calculate column widths
+			folderWidth, branchWidth, statusWidth := len("FOLDER"), len("BRANCH"), len("inactive")
 			for _, f := range folders {
+				if len(f.Name) > folderWidth {
+					folderWidth = len(f.Name)
+				}
+				if len(f.Branch) > branchWidth {
+					branchWidth = len(f.Branch)
+				}
+			}
+
+			// Print header
+			fmt.Printf("%-*s  %-*s  %-*s  %s\n", folderWidth, "FOLDER", branchWidth, "BRANCH", statusWidth, "STATUS", "LAST USED")
+
+			// Print rows
+			for _, f := range folders {
+				status := "inactive"
 				if f.IsActive {
-					fmt.Printf("  \033[32m%s -> %s (active, %s)\033[0m\n", f.Name, f.Branch, formatTimeAgo(f.LastUsed))
+					status = "active"
+				}
+				timeAgo := formatTimeAgo(f.LastUsed)
+
+				if f.IsActive {
+					fmt.Printf("\033[32m%-*s  %-*s  %-*s  %s\033[0m\n", folderWidth, f.Name, branchWidth, f.Branch, statusWidth, status, timeAgo)
 				} else {
-					fmt.Printf("  %s -> %s (inactive, %s)\n", f.Name, f.Branch, formatTimeAgo(f.LastUsed))
+					fmt.Printf("%-*s  %-*s  %-*s  %s\n", folderWidth, f.Name, branchWidth, f.Branch, statusWidth, status, timeAgo)
 				}
 			}
 		}
